@@ -1,0 +1,12 @@
+streamlit>=1.32.0
+plotly>=5.20.0
+pandas>=2.2.0
+numpy>=1.26.0
+faker>=24.0.0
+scipy>=1.12.0
+matplotlib>=3.8.0
+# [GEMINI] 사내 API 전환 시 아래 패키지를 삭제하고 사내 SDK 패키지로 교체
+# → OpenAI 호환 REST 방식이면: 삭제 후 추가 패키지 불필요 (requests는 기본 포함)
+# → OpenAI SDK + base_url 방식이면: openai>=1.0.0
+# → 사내 전용 SDK가 있다면: 해당 패키지명으로 교체
+google-genai>=1.0.0
