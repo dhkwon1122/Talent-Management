@@ -9,7 +9,7 @@ from src.data.loader import get_feature_table
 from src.scoring.calculator import calculate_raw_scores
 from src.scoring.normalizer import normalize
 from src.visualization.radar import make_radar_compare
-from config import DIMENSIONS
+from config import DIMENSIONS, COMPARISON_PALETTE
 
 st.set_page_config(page_title="인재 비교", layout="wide")
 st.title("⚖️ 인재 역량 비교")
@@ -46,6 +46,22 @@ subset_scores = scores[scores["researcher_id"].isin(selected_ids)].reset_index(d
 
 fig = make_radar_compare(subset_scores, selected_names)
 st.plotly_chart(fig, use_container_width=True)
+
+# 레전드 클릭 → 개인 프로필 이동
+_btn_css = "".join(
+    f"div[data-testid='column']:nth-child({i+1}) button[kind='secondary'] {{"
+    f"border-left:4px solid {COMPARISON_PALETTE[i % len(COMPARISON_PALETTE)]} !important;"
+    f"background:rgba(0,0,0,0.03) !important;}}"
+    for i in range(len(selected_ids))
+)
+st.markdown(f"<style>{_btn_css}</style>", unsafe_allow_html=True)
+
+_btn_cols = st.columns(len(selected_ids))
+for _i, (_rid, _name) in enumerate(zip(selected_ids, selected_names)):
+    with _btn_cols[_i]:
+        if st.button(f"👤 {_name}", key=f"goto_profile_{_rid}", use_container_width=True, help="개인 프로필 보기"):
+            st.session_state["profile_target"] = _rid
+            st.switch_page("pages/1_개인_프로필.py")
 
 st.divider()
 st.subheader("차원별 점수 비교표")

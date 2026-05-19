@@ -33,7 +33,14 @@ features, scores = load_scores()
 name_map = dict(zip(features["researcher_id"], features["name"]))
 options = [f"{rid} · {name}" for rid, name in name_map.items()]
 
-selected = st.sidebar.selectbox("인재 선택", options)
+_default_idx = 0
+if "profile_target" in st.session_state:
+    _target = st.session_state.pop("profile_target")
+    _match = [i for i, opt in enumerate(options) if opt.startswith(_target)]
+    if _match:
+        _default_idx = _match[0]
+
+selected = st.sidebar.selectbox("인재 선택", options, index=_default_idx)
 selected_id = selected.split(" · ")[0]
 
 feat_row = features[features["researcher_id"] == selected_id].iloc[0]
