@@ -10,6 +10,15 @@ DIMENSIONS = [
     "성장잠재력",
 ]
 
+# 업무성과 평가 등급 점수 (가=최고, 마=최저)
+GRADE_SCORES: Dict[str, float] = {
+    "가": 100.0,
+    "나": 80.0,
+    "다": 60.0,
+    "라": 40.0,
+    "마": 20.0,
+}
+
 # 각 차원별 세부 지표 가중치 (합계 = 1.0)
 SCORING_WEIGHTS: Dict[str, Dict[str, float]] = {
     "전문성": {
@@ -19,9 +28,10 @@ SCORING_WEIGHTS: Dict[str, Dict[str, float]] = {
         "registered_patents": 0.20,
     },
     "업무성과": {
-        "lead_project_count": 0.30,
-        "total_budget_managed": 0.30,
-        "avg_kpi_achievement": 0.40,
+        "grade_score": 0.50,           # 연도별 평가 등급 가중 평균
+        "avg_kpi_achievement": 0.25,
+        "lead_project_count": 0.15,
+        "total_budget_managed": 0.10,
     },
     "리더십": {
         "leadership_peer_score": 0.20,

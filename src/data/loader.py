@@ -4,6 +4,7 @@
 """
 import sys
 from pathlib import Path
+import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).parents[2]
@@ -81,6 +82,10 @@ def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
     ).reset_index()
     eval_agg["english_score_norm"] = eval_agg["english_score"] / 990.0
 
+    # --- 업무성과 평가 등급 점수 (최근 연도 가중 평균) ---
+    grade_map = _calc_grade_score(evals)
+    eval_agg["grade_score"] = eval_agg["researcher_id"].map(grade_map).fillna(60.0)
+
     # --- 국제 논문 (evaluations + papers 합산) ---
     intl_paper_agg = evals.groupby("researcher_id")["international_papers"].sum().reset_index()
     eval_agg = eval_agg.merge(intl_paper_agg, on="researcher_id", how="left")
@@ -122,6 +127,25 @@ def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return df
 
 
+def _calc_grade_score(evals: pd.DataFrame) -> dict:
+    """연도별 평가 등급을 최근 연도 선형 가중 평균 점수(0~100)로 변환."""
+    from config import GRADE_SCORES
+
+    result = {}
+    if "performance_grade" not in evals.columns:
+        return result
+
+    for rid, grp in evals.groupby("researcher_id"):
+        grp = grp.sort_values("year").reset_index(drop=True)
+        n = len(grp)
+        # 선형 가중치: 오래된 연도=1, 최근 연도=n
+        weights = np.arange(1, n + 1, dtype=float)
+        weights /= weights.sum()
+        scores = grp["performance_grade"].map(GRADE_SCORES).fillna(60.0)
+        result[rid] = float((scores.values * weights).sum())
+    return result
+
+
 def _calc_h_index(citations: pd.Series) -> int:
     sorted_cites = sorted(citations, reverse=True)
     h = 0
@@ -152,6 +176,14 @@ def _ensure_raw_data() -> None:
     if any(not (RAW_DIR / f).exists() for f in needed):
         from src.data.generator import generate_all
         generate_all()
+        return
+    # performance_grade 컬럼 없으면 데이터 재생성
+    eval_path = RAW_DIR / "evaluations.csv"
+    if eval_path.exists():
+        header = pd.read_csv(eval_path, nrows=0)
+        if "performance_grade" not in header.columns:
+            from src.data.generator import generate_all
+            generate_all()
 
 
 def get_feature_table() -> pd.DataFrame:

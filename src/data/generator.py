@@ -178,13 +178,31 @@ def _gen_projects(rng: np.random.Generator, researchers: pd.DataFrame, years: li
     return pd.DataFrame(rows)
 
 
+def _grade_from_quality(quality: float) -> str:
+    """개인 역량 수준(0~1)을 평가 등급(가~마)으로 변환."""
+    if quality > 0.85:
+        return "가"
+    elif quality > 0.65:
+        return "나"
+    elif quality > 0.38:
+        return "다"
+    elif quality > 0.18:
+        return "라"
+    else:
+        return "마"
+
+
 def _gen_evaluations(rng: np.random.Generator, researchers: pd.DataFrame, years: list) -> pd.DataFrame:
     rows = []
+    # 직급별 역량 평균 (수석 > 선임 > 책임)
+    quality_means = {"책임연구원": 0.42, "선임연구원": 0.55, "수석연구원": 0.72}
     for _, r in researchers.iterrows():
         seniority = {"책임연구원": 0.7, "선임연구원": 1.0, "수석연구원": 1.3}[r["position"]]
         # 개인 고정 특성 (사람마다 다른 강점)
         eng_base = int(rng.integers(550, 920))
         leadership_base = float(rng.uniform(5.5, 9.5))
+        # 연구자 개인 역량 베이스 (연도 간 연속성 유지)
+        quality_base = float(np.clip(rng.normal(quality_means[r["position"]], 0.15), 0.0, 1.0))
         for year in years:
             # 연도별 소폭 변화
             english_score = int(np.clip(eng_base + rng.integers(-30, 50), 400, 990))
@@ -196,9 +214,13 @@ def _gen_evaluations(rng: np.random.Generator, researchers: pd.DataFrame, years:
             intra_collab = int(rng.poisson(seniority * 2.0))
             external_collab = int(rng.poisson(seniority * 1.0))
             training = int(rng.integers(20, 120))
+            # 연도별 평가 등급 (개인 역량 베이스 ± 연도 노이즈)
+            year_quality = float(np.clip(quality_base + rng.normal(0, 0.08), 0.0, 1.0))
+            grade = _grade_from_quality(year_quality)
             rows.append({
                 "researcher_id": r["id"],
                 "year": year,
+                "performance_grade": grade,
                 "english_score": english_score,
                 "overseas_months": overseas,
                 "international_papers": intl_papers,
