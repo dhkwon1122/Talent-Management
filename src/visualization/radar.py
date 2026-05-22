@@ -18,8 +18,13 @@ def make_radar_single(row: pd.Series, name: str, color: str = "#4C72B0") -> go.F
     )
 
 
-def make_radar_compare(scores_df: pd.DataFrame, names: list[str]) -> go.Figure:
-    """다수 인재 오버레이 레이더 차트."""
+def make_radar_compare(
+    scores_df: pd.DataFrame,
+    names: list[str],
+    reference: pd.Series | None = None,
+    ref_name: str = "조직 평균",
+) -> go.Figure:
+    """다수 인재 오버레이 레이더 차트. reference를 주면 조직 평균 참조선을 추가한다."""
     traces = []
     for i, (_, row) in enumerate(scores_df.iterrows()):
         values = [float(row[dim]) for dim in DIMENSIONS]
@@ -32,10 +37,18 @@ def make_radar_compare(scores_df: pd.DataFrame, names: list[str]) -> go.Figure:
         categories=DIMENSIONS,
         traces=traces,
         title="인재 역량 비교",
+        reference=reference,
+        ref_name=ref_name,
     )
 
 
-def _build_figure(categories: list, traces: list[dict], title: str) -> go.Figure:
+def _build_figure(
+    categories: list,
+    traces: list[dict],
+    title: str,
+    reference: pd.Series | None = None,
+    ref_name: str = "조직 평균",
+) -> go.Figure:
     fig = go.Figure()
     closed_cats = categories + [categories[0]]
 
@@ -49,6 +62,17 @@ def _build_figure(categories: list, traces: list[dict], title: str) -> go.Figure
             line=dict(color=t["color"], width=2),
             fillcolor=_hex_to_rgba(t["color"], alpha=0.15),
             hovertemplate="%{theta}: %{r:.1f}<extra>" + t["name"] + "</extra>",
+        ))
+
+    if reference is not None:
+        ref_vals = [float(reference[dim]) for dim in categories]
+        fig.add_trace(go.Scatterpolar(
+            r=ref_vals + [ref_vals[0]],
+            theta=closed_cats,
+            fill="none",
+            name=ref_name,
+            line=dict(color="#888888", width=2, dash="dash"),
+            hovertemplate="%{theta}: %{r:.1f}<extra>" + ref_name + "</extra>",
         ))
 
     fig.update_layout(
