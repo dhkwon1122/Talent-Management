@@ -14,7 +14,7 @@ from src.visualization.components import (
     score_badge,
     overall_score_metric,
 )
-from config import DIMENSIONS, DIMENSION_COLORS, GRADE_SCORES
+from config import DIMENSIONS, DIMENSION_COLORS, GRADE_SCORES, DEPARTMENTS
 
 st.set_page_config(page_title="개인 프로필", layout="wide")
 st.title("👤 개인 역량 프로필")
@@ -46,16 +46,42 @@ features, scores = load_scores()
 grade_history = load_grade_history()
 
 name_map = dict(zip(features["researcher_id"], features["name"]))
-options = [f"{rid} · {name}" for rid, name in name_map.items()]
+dept_map  = dict(zip(features["researcher_id"], features["department"]))
 
+# ── 사이드바: 조직 → 인재 순으로 선택 ────────────────────────
+st.sidebar.header("필터")
+
+# 다른 페이지에서 넘어온 경우 해당 인재의 부서를 기본값으로 설정
+_target_id = st.session_state.pop("profile_target", None)
+_default_dept = "전체"
+if _target_id and _target_id in dept_map:
+    _default_dept = dept_map[_target_id]
+
+dept_options = ["전체"] + sorted(DEPARTMENTS)
+_dept_idx = dept_options.index(_default_dept) if _default_dept in dept_options else 0
+selected_dept = st.sidebar.selectbox("🏢 조직 선택", dept_options, index=_dept_idx)
+
+# 선택 조직으로 인재 목록 필터
+if selected_dept == "전체":
+    pool = features
+else:
+    pool = features[features["department"] == selected_dept]
+
+pool_opts = [f"{r} · {name_map[r]}" for r in pool["researcher_id"]]
+
+# 기본 선택 인재 결정
 _default_idx = 0
-if "profile_target" in st.session_state:
-    _target = st.session_state.pop("profile_target")
-    _match = [i for i, opt in enumerate(options) if opt.startswith(_target)]
+if _target_id:
+    _match = [i for i, o in enumerate(pool_opts) if o.startswith(_target_id)]
     if _match:
         _default_idx = _match[0]
 
-selected = st.sidebar.selectbox("인재 선택", options, index=_default_idx)
+selected = st.sidebar.selectbox(
+    "👤 인재 선택",
+    pool_opts,
+    index=_default_idx,
+    key=f"profile_person_{selected_dept}",   # 조직 바뀌면 선택 초기화
+)
 selected_id = selected.split(" · ")[0]
 
 feat_row = features[features["researcher_id"] == selected_id].iloc[0]
