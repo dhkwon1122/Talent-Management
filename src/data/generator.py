@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 
-from config import MOCK_CONFIG, POSITIONS, DEPARTMENTS
+from config import MOCK_CONFIG, POSITIONS, DEPARTMENTS, GRADE_MERIT_RATES
 
 RAW_DIR = Path(__file__).parents[2] / "data" / "raw"
 
@@ -217,10 +217,16 @@ def _gen_evaluations(rng: np.random.Generator, researchers: pd.DataFrame, years:
             # 연도별 평가 등급 (개인 역량 베이스 ± 연도 노이즈)
             year_quality = float(np.clip(quality_base + rng.normal(0, 0.08), 0.0, 1.0))
             grade = _grade_from_quality(year_quality)
+            # 성과인상율: 등급별 기준율 ± 개인 편차 (표준편차 15 %)
+            base_rate = GRADE_MERIT_RATES[grade]
+            merit_raise_rate = float(np.clip(
+                rng.normal(base_rate, base_rate * 0.15), 0.001, 0.15
+            ))
             rows.append({
                 "researcher_id": r["id"],
                 "year": year,
                 "performance_grade": grade,
+                "merit_raise_rate": round(merit_raise_rate, 4),
                 "english_score": english_score,
                 "overseas_months": overseas,
                 "international_papers": intl_papers,

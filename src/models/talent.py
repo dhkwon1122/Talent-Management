@@ -45,6 +45,7 @@ class EvaluationRecord:
     researcher_id: str
     year: int
     performance_grade: str      # 업무성과 평가 등급 (가/나/다/라/마)
+    merit_raise_rate: float     # 성과인상율 (예: 0.035 = 3.5 %)
     english_score: int          # TOEIC 기준 (0~990)
     overseas_months: int        # 누적 해외 파견 기간
     international_papers: int   # 국제 공동 연구 논문 수

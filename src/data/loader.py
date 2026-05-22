@@ -128,12 +128,28 @@ def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def _calc_grade_score(evals: pd.DataFrame) -> dict:
-    """연도별 평가 등급을 최근 연도 선형 가중 평균 점수(0~100)로 변환."""
-    from config import GRADE_SCORES
+    """연도별 평가 등급을 최근 연도 선형 가중 평균 점수(0~100)로 변환.
+
+    성과인상율 보정:
+        해당 연도·등급의 평균 인상율 대비 개인 인상율 비율로 등급 점수를 조정한다.
+        보정 계수는 MERIT_CORRECTION_BOUNDS 범위로 클램프한다.
+    """
+    from config import GRADE_SCORES, GRADE_MERIT_RATES, MERIT_CORRECTION_BOUNDS
 
     result = {}
     if "performance_grade" not in evals.columns:
         return result
+
+    has_merit = "merit_raise_rate" in evals.columns
+
+    # 연도·등급별 평균 성과인상율 (보정 기준값)
+    if has_merit:
+        grade_year_avg = (
+            evals.groupby(["year", "performance_grade"])["merit_raise_rate"]
+            .mean()
+        )
+
+    lo, hi = MERIT_CORRECTION_BOUNDS
 
     for rid, grp in evals.groupby("researcher_id"):
         grp = grp.sort_values("year").reset_index(drop=True)
@@ -141,8 +157,22 @@ def _calc_grade_score(evals: pd.DataFrame) -> dict:
         # 선형 가중치: 오래된 연도=1, 최근 연도=n
         weights = np.arange(1, n + 1, dtype=float)
         weights /= weights.sum()
-        scores = grp["performance_grade"].map(GRADE_SCORES).fillna(60.0)
-        result[rid] = float((scores.values * weights).sum())
+
+        adjusted = []
+        for _, row in grp.iterrows():
+            base = float(GRADE_SCORES.get(row["performance_grade"], 60.0))
+
+            if has_merit:
+                key = (row["year"], row["performance_grade"])
+                avg_rate = grade_year_avg.get(key, GRADE_MERIT_RATES.get(row["performance_grade"], 0.03))
+                indiv_rate = float(row["merit_raise_rate"])
+                correction = float(np.clip(indiv_rate / avg_rate if avg_rate > 0 else 1.0, lo, hi))
+            else:
+                correction = 1.0
+
+            adjusted.append(base * correction)
+
+        result[rid] = float(np.dot(adjusted, weights))
     return result
 
 
@@ -177,11 +207,12 @@ def _ensure_raw_data() -> None:
         from src.data.generator import generate_all
         generate_all()
         return
-    # performance_grade 컬럼 없으면 데이터 재생성
+    # 필수 컬럼 없으면 데이터 재생성
     eval_path = RAW_DIR / "evaluations.csv"
     if eval_path.exists():
         header = pd.read_csv(eval_path, nrows=0)
-        if "performance_grade" not in header.columns:
+        required_cols = {"performance_grade", "merit_raise_rate"}
+        if not required_cols.issubset(header.columns):
             from src.data.generator import generate_all
             generate_all()
 
