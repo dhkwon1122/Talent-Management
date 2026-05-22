@@ -1,16 +1,21 @@
-"""
-원시 CSV 데이터를 로드하고 분석에 필요한 집계 형태로 병합한다.
-데이터가 없으면 generator를 자동 실행해 생성한다.
-"""
-import sys
+"""원시 CSV 데이터를 로드하고 분석에 필요한 집계 형태로 병합한다."""
 from pathlib import Path
+
 import pandas as pd
 
 ROOT = Path(__file__).parents[2]
-sys.path.insert(0, str(ROOT))
 
 RAW_DIR = ROOT / "data" / "raw"
-PROCESSED_DIR = ROOT / "data" / "processed"
+
+RAW_FILES = [
+    "researchers.csv",
+    "papers.csv",
+    "patents.csv",
+    "projects.csv",
+    "evaluations.csv",
+    "peer_review_comments.csv",
+    "leadership_comments.csv",
+]
 
 
 def load_raw() -> dict[str, pd.DataFrame]:
@@ -26,33 +31,45 @@ def load_raw() -> dict[str, pd.DataFrame]:
 
 def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """인재별 원시 집계 피처 테이블을 반환한다."""
-    res = raw["researchers"].copy()
-    papers = raw["papers"]
-    patents = raw["patents"]
-    projects = raw["projects"]
-    evals = raw["evaluations"]
+    df = raw["researchers"].copy().rename(columns={"id": "researcher_id"})
+    for agg_df in [
+        _aggregate_papers(raw["papers"]),
+        _aggregate_patents(raw["patents"]),
+        _aggregate_projects(raw["projects"]),
+        _aggregate_evaluations(raw["evaluations"]),
+    ]:
+        df = df.merge(agg_df, on="researcher_id", how="left")
 
-    # --- 논문 집계 ---
+    df["achievement_efficiency"] = (
+        df["total_papers"].fillna(0) + df["lead_project_count"].fillna(0)
+    ) / df["career_years"].clip(lower=1)
+
+    df = df.fillna(0)
+    return _attach_text_scores(df)
+
+
+def _aggregate_papers(papers: pd.DataFrame) -> pd.DataFrame:
     paper_agg = papers.groupby("researcher_id").agg(
         total_papers=("citations", "count"),
         total_citations=("citations", "sum"),
         international_papers=("is_international", "sum"),
     ).reset_index()
-    paper_agg["h_index"] = papers.groupby("researcher_id")["citations"].apply(
-        _calc_h_index
-    ).reset_index(drop=True)
-
-    # h_index 재계산 (groupby apply 순서 맞추기)
-    h_map = {rid: _calc_h_index(grp["citations"]) for rid, grp in papers.groupby("researcher_id")}
+    h_map = {
+        rid: _calc_h_index(grp["citations"])
+        for rid, grp in papers.groupby("researcher_id")
+    }
     paper_agg["h_index"] = paper_agg["researcher_id"].map(h_map)
+    return paper_agg
 
-    # --- 특허 집계 ---
-    patent_agg = patents.groupby("researcher_id").agg(
+
+def _aggregate_patents(patents: pd.DataFrame) -> pd.DataFrame:
+    return patents.groupby("researcher_id").agg(
         registered_patents=("status", lambda s: (s == "등록").sum()),
         tech_transfers=("is_tech_transfer", "sum"),
     ).reset_index()
 
-    # --- 과제 집계 ---
+
+def _aggregate_projects(projects: pd.DataFrame) -> pd.DataFrame:
     lead_proj = projects[projects["role"] == "주관"]
     project_agg = projects.groupby("researcher_id").agg(
         avg_kpi_achievement=("kpi_achievement", "mean"),
@@ -64,11 +81,14 @@ def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
     project_agg = project_agg.merge(lead_agg, on="researcher_id", how="left")
     project_agg["lead_project_count"] = project_agg["lead_project_count"].fillna(0)
 
-    # --- 성장 추이 (최근 3년 KPI 평균 증감률) ---
     growth_map = _calc_growth_rate(projects)
-    project_agg["performance_growth_rate"] = project_agg["researcher_id"].map(growth_map).fillna(0)
+    project_agg["performance_growth_rate"] = (
+        project_agg["researcher_id"].map(growth_map).fillna(0)
+    )
+    return project_agg
 
-    # --- 평가 집계 (전 기간 평균) ---
+
+def _aggregate_evaluations(evals: pd.DataFrame) -> pd.DataFrame:
     eval_agg = evals.groupby("researcher_id").agg(
         english_score=("english_score", "mean"),
         overseas_months=("overseas_months", "sum"),
@@ -81,22 +101,13 @@ def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
     ).reset_index()
     eval_agg["english_score_norm"] = eval_agg["english_score"] / 990.0
 
-    # --- 국제 논문 (evaluations + papers 합산) ---
-    intl_paper_agg = evals.groupby("researcher_id")["international_papers"].sum().reset_index()
-    eval_agg = eval_agg.merge(intl_paper_agg, on="researcher_id", how="left")
+    intl_paper_agg = (
+        evals.groupby("researcher_id")["international_papers"].sum().reset_index()
+    )
+    return eval_agg.merge(intl_paper_agg, on="researcher_id", how="left")
 
-    # --- 전체 병합 ---
-    df = res.rename(columns={"id": "researcher_id"})
-    for agg_df in [paper_agg, patent_agg, project_agg, eval_agg]:
-        df = df.merge(agg_df, on="researcher_id", how="left")
 
-    df["achievement_efficiency"] = (
-        df["total_papers"].fillna(0) + df["lead_project_count"].fillna(0)
-    ) / df["career_years"].clip(lower=1)
-
-    df = df.fillna(0)
-
-    # --- 정성 코멘트 텍스트 점수 통합 ---
+def _attach_text_scores(df: pd.DataFrame) -> pd.DataFrame:
     peer_path = RAW_DIR / "peer_review_comments.csv"
     leadership_path = RAW_DIR / "leadership_comments.csv"
     if peer_path.exists() or leadership_path.exists():
@@ -106,10 +117,14 @@ def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
             leadership_df = pd.read_csv(leadership_path) if leadership_path.exists() else None
             text_scores = score_all_comments(peer_df, leadership_df)
             df["peer_review_text_score"] = (
-                df["researcher_id"].map(text_scores.get("peer_review_text_score", {})).fillna(5.0)
+                df["researcher_id"]
+                .map(text_scores.get("peer_review_text_score", {}))
+                .fillna(5.0)
             )
             df["leadership_text_score"] = (
-                df["researcher_id"].map(text_scores.get("leadership_text_score", {})).fillna(5.0)
+                df["researcher_id"]
+                .map(text_scores.get("leadership_text_score", {}))
+                .fillna(5.0)
             )
         except Exception as e:
             print(f"[loader] 텍스트 점수 로드 실패, 기본값 사용: {e}")
@@ -148,8 +163,7 @@ def _calc_growth_rate(projects: pd.DataFrame) -> dict:
 
 
 def _ensure_raw_data() -> None:
-    needed = ["researchers.csv", "peer_review_comments.csv", "leadership_comments.csv"]
-    if any(not (RAW_DIR / f).exists() for f in needed):
+    if any(not (RAW_DIR / filename).exists() for filename in RAW_FILES):
         from src.data.generator import generate_all
         generate_all()
 

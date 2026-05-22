@@ -2,13 +2,11 @@
 가상 인재 데이터 생성기.
 실제 데이터 연동 전 프로토타이핑용으로 현실적인 분포의 샘플 데이터를 생성한다.
 """
-import sys
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
-sys.path.insert(0, str(ROOT))
 
 from config import MOCK_CONFIG, POSITIONS, DEPARTMENTS
 

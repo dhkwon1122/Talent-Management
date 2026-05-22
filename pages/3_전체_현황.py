@@ -1,15 +1,9 @@
 """전체 인재 히트맵 + 종합 순위 페이지."""
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parents[1]))
-
 import streamlit as st
 import plotly.express as px
 import pandas as pd
 
-from src.data.loader import get_feature_table
-from src.scoring.calculator import calculate_raw_scores
-from src.scoring.normalizer import normalize
+from src.services.talent_scores import load_scores
 from src.visualization.components import heatmap_table
 from config import DIMENSIONS
 
@@ -17,23 +11,13 @@ st.set_page_config(page_title="전체 현황", layout="wide")
 st.title("📊 전체 인재 역량 현황")
 
 
-@st.cache_data
-def load_scores():
-    features = get_feature_table()
-    raw = calculate_raw_scores(features)
-    scores = normalize(raw)
-    return features, scores
-
-
 features, scores = load_scores()
 
 name_map = dict(zip(features["researcher_id"], features["name"]))
 dept_map = dict(zip(features["researcher_id"], features["department"]))
 pos_map = dict(zip(features["researcher_id"], features["position"]))
-all_names = [name_map[rid] for rid in scores["researcher_id"]]
 
 # 필터
-col_f1, col_f2 = st.sidebar.columns(1), None
 dept_filter = st.sidebar.multiselect("부서 필터", options=features["department"].unique().tolist())
 pos_filter = st.sidebar.multiselect("직급 필터", options=features["position"].unique().tolist())
 

@@ -2,12 +2,6 @@
 인재 역량 대시보드 메인 진입점.
 사이드바에서 페이지를 선택하거나 Streamlit 멀티페이지 네비게이션을 사용한다.
 """
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).parent
-sys.path.insert(0, str(ROOT))
-
 import streamlit as st
 
 st.set_page_config(

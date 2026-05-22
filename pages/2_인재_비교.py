@@ -1,26 +1,12 @@
 """다중 인재 오버레이 레이더 차트 비교 페이지."""
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parents[1]))
-
 import streamlit as st
 
-from src.data.loader import get_feature_table
-from src.scoring.calculator import calculate_raw_scores
-from src.scoring.normalizer import normalize
+from src.services.talent_scores import load_scores
 from src.visualization.radar import make_radar_compare
 from config import DIMENSIONS, COMPARISON_PALETTE
 
 st.set_page_config(page_title="인재 비교", layout="wide")
 st.title("⚖️ 인재 역량 비교")
-
-
-@st.cache_data
-def load_scores():
-    features = get_feature_table()
-    raw = calculate_raw_scores(features)
-    scores = normalize(raw)
-    return features, scores
 
 
 features, scores = load_scores()

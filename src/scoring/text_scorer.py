@@ -12,13 +12,11 @@ LLM 기반 정성 데이터 정량화 모듈.
 import json
 import os
 import re
-import sys
 from pathlib import Path
 
 import pandas as pd
 
 ROOT = Path(__file__).parents[2]
-sys.path.insert(0, str(ROOT))
 
 PROCESSED_DIR = ROOT / "data" / "processed"
 CACHE_FILE = PROCESSED_DIR / "text_scores.json"

@@ -4,7 +4,7 @@
 """
 import pandas as pd
 
-from config import SCORING_WEIGHTS
+from config import DIMENSIONS, SCORING_WEIGHTS
 
 
 def calculate_raw_scores(features: pd.DataFrame) -> pd.DataFrame:
@@ -12,12 +12,8 @@ def calculate_raw_scores(features: pd.DataFrame) -> pd.DataFrame:
     df = features.copy()
 
     scores = pd.DataFrame({"researcher_id": df["researcher_id"]})
-    scores["전문성"] = _expertise(df)
-    scores["업무성과"] = _performance(df)
-    scores["리더십"] = _leadership(df)
-    scores["글로벌역량"] = _global_competency(df)
-    scores["협업네트워크"] = _network(df)
-    scores["성장잠재력"] = _potential(df)
+    for dim in DIMENSIONS:
+        scores[dim] = _weighted(df, dim)
 
     return scores
 
@@ -29,27 +25,3 @@ def _weighted(df: pd.DataFrame, dim: str) -> pd.Series:
         if col in df.columns:
             result += df[col].fillna(0) * w
     return result
-
-
-def _expertise(df: pd.DataFrame) -> pd.Series:
-    return _weighted(df, "전문성")
-
-
-def _performance(df: pd.DataFrame) -> pd.Series:
-    return _weighted(df, "업무성과")
-
-
-def _leadership(df: pd.DataFrame) -> pd.Series:
-    return _weighted(df, "리더십")
-
-
-def _global_competency(df: pd.DataFrame) -> pd.Series:
-    return _weighted(df, "글로벌역량")
-
-
-def _network(df: pd.DataFrame) -> pd.Series:
-    return _weighted(df, "협업네트워크")
-
-
-def _potential(df: pd.DataFrame) -> pd.Series:
-    return _weighted(df, "성장잠재력")

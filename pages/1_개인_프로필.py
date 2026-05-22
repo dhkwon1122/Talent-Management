@@ -1,31 +1,17 @@
 """개인 인재 프로필: 방사형 차트 + 차원별 점수 배지."""
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parents[1]))
-
 import streamlit as st
 
-from src.data.loader import get_feature_table
-from src.scoring.calculator import calculate_raw_scores
-from src.scoring.normalizer import normalize
+from src.services.talent_scores import load_scores
 from src.visualization.radar import make_radar_single
 from src.visualization.components import (
     researcher_info_card,
     score_badge,
     overall_score_metric,
 )
-from config import DIMENSIONS, DIMENSION_COLORS
+from config import DIMENSIONS
 
 st.set_page_config(page_title="개인 프로필", layout="wide")
 st.title("👤 개인 역량 프로필")
-
-
-@st.cache_data
-def load_scores():
-    features = get_feature_table()
-    raw = calculate_raw_scores(features)
-    scores = normalize(raw)
-    return features, scores
 
 
 features, scores = load_scores()
