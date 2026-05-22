@@ -31,49 +31,59 @@ def load_scores():
 @st.cache_data
 def load_grade_history():
     from config import GRADE_MERIT_RATES, MERIT_CORRECTION_BOUNDS
-    raw = load_raw()
-    evals = raw["evaluations"]
+    raw       = load_raw()
+    evals     = raw["evaluations"]
+    standards = raw.get("merit_standards")
+    pos_map   = dict(zip(raw["researchers"]["id"], raw["researchers"]["position"]))
+
     if "performance_grade" not in evals.columns:
-        return {}, {}
+        return {}, False
 
     has_merit = "merit_raise_rate" in evals.columns
 
-    # 연도·등급별 평균 인상율 (보정 기준값)
-    if has_merit:
-        grade_year_avg = (
-            evals.groupby(["year", "performance_grade"])["merit_raise_rate"]
-            .mean()
-        )
+    # (year, position, grade) → 기준 인상율 조회 테이블
+    std_lookup: dict = {}
+    if standards is not None and not standards.empty:
+        for _, r in standards.iterrows():
+            std_lookup[(int(r["year"]), r["position"], r["grade"])] = float(r["base_rate"])
 
     lo, hi = MERIT_CORRECTION_BOUNDS
     grade_history = {}
+
     for rid, grp in evals.groupby("researcher_id"):
+        position = pos_map.get(rid, "")
         grp = grp.sort_values("year").copy()
         rows = []
         for _, r in grp.iterrows():
-            base = float(GRADE_SCORES.get(r["performance_grade"], 60.0))
+            base  = float(GRADE_SCORES.get(r["performance_grade"], 60.0))
+            year  = int(r["year"])
+            grade = r["performance_grade"]
+
             if has_merit:
-                avg_rate = grade_year_avg.get(
-                    (r["year"], r["performance_grade"]),
-                    GRADE_MERIT_RATES.get(r["performance_grade"], 0.03),
-                )
                 indiv_rate = float(r["merit_raise_rate"])
-                correction = float(min(hi, max(lo, indiv_rate / avg_rate if avg_rate > 0 else 1.0)))
-                merit_pct   = round(indiv_rate * 100, 2)
-                avg_pct     = round(avg_rate * 100, 2)
+                # 기준율: standards CSV(연도·직급·등급) → config 기본값 순 폴백
+                std_rate = (
+                    std_lookup.get((year, position, grade))
+                    or GRADE_MERIT_RATES.get(grade, 0.03)
+                )
+                correction = float(min(hi, max(lo,
+                    indiv_rate / std_rate if std_rate > 0 else 1.0
+                )))
+                merit_pct = round(indiv_rate * 100, 2)
+                std_pct   = round(std_rate * 100, 2)
             else:
-                correction  = 1.0
-                merit_pct   = None
-                avg_pct     = None
+                correction = 1.0
+                merit_pct  = None
+                std_pct    = None
 
             rows.append({
-                "연도":       int(r["year"]),
-                "평가등급":   r["performance_grade"],
-                "환산점수":   round(base, 1),
-                "개인인상율": merit_pct,
-                "등급평균인상율": avg_pct,
-                "보정계수":   round(correction, 3),
-                "보정점수":   round(base * correction, 1),
+                "연도":           year,
+                "평가등급":       grade,
+                "환산점수":       round(base, 1),
+                "기준인상율":     std_pct,    # 연도·직급·등급 기준
+                "개인인상율":     merit_pct,
+                "보정계수":       round(correction, 3),
+                "보정점수":       round(base * correction, 1),
             })
         grade_history[rid] = rows
     return grade_history, has_merit
@@ -171,13 +181,13 @@ with st.expander("📊 업무성과 평가 등급 이력"):
             import pandas as pd
             st.markdown("**연도별 성과인상율 상세**")
             tbl = pd.DataFrame(hist_rows)[
-                ["연도", "평가등급", "등급평균인상율", "개인인상율", "보정계수", "환산점수", "보정점수"]
+                ["연도", "평가등급", "기준인상율", "개인인상율", "보정계수", "환산점수", "보정점수"]
             ].rename(columns={
-                "등급평균인상율": "등급 평균인상율(%)",
-                "개인인상율":     "개인 인상율(%)",
-                "보정계수":       "보정 계수",
-                "환산점수":       "등급 기준점수",
-                "보정점수":       "보정 후 점수",
+                "기준인상율": "기준 인상율(%) ※연도·직급·등급",
+                "개인인상율": "개인 인상율(%)",
+                "보정계수":   "보정 계수",
+                "환산점수":   "등급 기준점수",
+                "보정점수":   "보정 후 점수",
             })
             st.dataframe(tbl, use_container_width=True, hide_index=True)
 
