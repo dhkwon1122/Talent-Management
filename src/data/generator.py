@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT))
 
-from config import MOCK_CONFIG, POSITIONS, DEPARTMENTS
+from config import MOCK_CONFIG, POSITIONS, DEPARTMENTS, GRADE_MERIT_RATES
 
 RAW_DIR = Path(__file__).parents[2] / "data" / "raw"
 
@@ -64,22 +64,24 @@ def generate_all(seed: int = MOCK_CONFIG["seed"]) -> None:
     n = MOCK_CONFIG["n_researchers"]
     years = list(range(MOCK_CONFIG["year_range"][0], MOCK_CONFIG["year_range"][1] + 1))
 
-    researchers = _gen_researchers(rng, n)
-    papers = _gen_papers(rng, researchers, years)
-    patents = _gen_patents(rng, researchers, years)
-    projects = _gen_projects(rng, researchers, years)
-    evaluations = _gen_evaluations(rng, researchers, years)
+    researchers    = _gen_researchers(rng, n)
+    papers         = _gen_papers(rng, researchers, years)
+    patents        = _gen_patents(rng, researchers, years)
+    projects       = _gen_projects(rng, researchers, years)
+    merit_standards = _gen_merit_standards(rng, years)          # ← 먼저 생성
+    evaluations    = _gen_evaluations(rng, researchers, years, merit_standards)
 
-    peer_comments = _gen_peer_review_comments(rng, researchers)
+    peer_comments       = _gen_peer_review_comments(rng, researchers)
     leadership_comments = _gen_leadership_comments(rng, researchers)
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
-    researchers.to_csv(RAW_DIR / "researchers.csv", index=False, encoding="utf-8-sig")
-    papers.to_csv(RAW_DIR / "papers.csv", index=False, encoding="utf-8-sig")
-    patents.to_csv(RAW_DIR / "patents.csv", index=False, encoding="utf-8-sig")
-    projects.to_csv(RAW_DIR / "projects.csv", index=False, encoding="utf-8-sig")
-    evaluations.to_csv(RAW_DIR / "evaluations.csv", index=False, encoding="utf-8-sig")
-    peer_comments.to_csv(RAW_DIR / "peer_review_comments.csv", index=False, encoding="utf-8-sig")
+    researchers.to_csv(RAW_DIR / "researchers.csv",           index=False, encoding="utf-8-sig")
+    papers.to_csv(RAW_DIR / "papers.csv",                     index=False, encoding="utf-8-sig")
+    patents.to_csv(RAW_DIR / "patents.csv",                   index=False, encoding="utf-8-sig")
+    projects.to_csv(RAW_DIR / "projects.csv",                 index=False, encoding="utf-8-sig")
+    merit_standards.to_csv(RAW_DIR / "merit_standards.csv",   index=False, encoding="utf-8-sig")
+    evaluations.to_csv(RAW_DIR / "evaluations.csv",           index=False, encoding="utf-8-sig")
+    peer_comments.to_csv(RAW_DIR / "peer_review_comments.csv",index=False, encoding="utf-8-sig")
     leadership_comments.to_csv(RAW_DIR / "leadership_comments.csv", index=False, encoding="utf-8-sig")
 
 
@@ -178,6 +180,34 @@ def _gen_projects(rng: np.random.Generator, researchers: pd.DataFrame, years: li
     return pd.DataFrame(rows)
 
 
+def _gen_merit_standards(rng: np.random.Generator, years: list) -> pd.DataFrame:
+    """연도 × 직급 × 등급 기준 성과인상율 테이블을 생성한다.
+
+    CSV 컬럼: year | position | grade | base_rate
+    실제 운영 시 이 파일을 회사 기준 데이터로 교체하면 된다.
+    """
+    # 연도별 경제 환경 계수 (±7 % 범위 내 소폭 변동)
+    year_factor = {y: float(np.clip(rng.normal(1.0, 0.07), 0.82, 1.18)) for y in years}
+
+    # 등급별 기준 인상율 (다=3 % 기준)
+    grade_base = {"가": 0.050, "나": 0.040, "다": 0.030, "라": 0.020, "마": 0.010}
+    # 직급별 가산율 (수석이 더 높은 인상율)
+    pos_add    = {"책임연구원": 0.000, "선임연구원": 0.003, "수석연구원": 0.006}
+
+    rows = []
+    for year in years:
+        for position in POSITIONS:
+            for grade in ["가", "나", "다", "라", "마"]:
+                rate = (grade_base[grade] + pos_add[position]) * year_factor[year]
+                rows.append({
+                    "year":     year,
+                    "position": position,
+                    "grade":    grade,
+                    "base_rate": round(float(rate), 4),
+                })
+    return pd.DataFrame(rows)
+
+
 def _grade_from_quality(quality: float) -> str:
     """개인 역량 수준(0~1)을 평가 등급(가~마)으로 변환."""
     if quality > 0.85:
@@ -192,44 +222,58 @@ def _grade_from_quality(quality: float) -> str:
         return "마"
 
 
-def _gen_evaluations(rng: np.random.Generator, researchers: pd.DataFrame, years: list) -> pd.DataFrame:
+def _gen_evaluations(
+    rng: np.random.Generator,
+    researchers: pd.DataFrame,
+    years: list,
+    merit_standards: pd.DataFrame,
+) -> pd.DataFrame:
+    """연도별 평가 데이터 생성. merit_standards 표를 참조해 개인 성과인상율을 산출한다."""
+    std_map = merit_standards.set_index(["year", "position", "grade"])["base_rate"].to_dict()
+
     rows = []
-    # 직급별 역량 평균 (수석 > 선임 > 책임)
     quality_means = {"책임연구원": 0.42, "선임연구원": 0.55, "수석연구원": 0.72}
     for _, r in researchers.iterrows():
-        seniority = {"책임연구원": 0.7, "선임연구원": 1.0, "수석연구원": 1.3}[r["position"]]
-        # 개인 고정 특성 (사람마다 다른 강점)
-        eng_base = int(rng.integers(550, 920))
+        seniority       = {"책임연구원": 0.7, "선임연구원": 1.0, "수석연구원": 1.3}[r["position"]]
+        eng_base        = int(rng.integers(550, 920))
         leadership_base = float(rng.uniform(5.5, 9.5))
-        # 연구자 개인 역량 베이스 (연도 간 연속성 유지)
-        quality_base = float(np.clip(rng.normal(quality_means[r["position"]], 0.15), 0.0, 1.0))
+        quality_base    = float(np.clip(rng.normal(quality_means[r["position"]], 0.15), 0.0, 1.0))
         for year in years:
-            # 연도별 소폭 변화
-            english_score = int(np.clip(eng_base + rng.integers(-30, 50), 400, 990))
-            overseas = int(rng.poisson(seniority * 1.5))
-            intl_papers = int(rng.poisson(seniority * 0.8))
-            peer_score = float(np.clip(rng.normal(7.0, 1.2), 3.0, 10.0))
-            leadership = float(np.clip(leadership_base + rng.normal(0, 0.3), 3.0, 10.0))
-            mentoring = int(rng.poisson(seniority * 0.8))
-            intra_collab = int(rng.poisson(seniority * 2.0))
+            english_score   = int(np.clip(eng_base + rng.integers(-30, 50), 400, 990))
+            overseas        = int(rng.poisson(seniority * 1.5))
+            intl_papers     = int(rng.poisson(seniority * 0.8))
+            peer_score      = float(np.clip(rng.normal(7.0, 1.2), 3.0, 10.0))
+            leadership      = float(np.clip(leadership_base + rng.normal(0, 0.3), 3.0, 10.0))
+            mentoring       = int(rng.poisson(seniority * 0.8))
+            intra_collab    = int(rng.poisson(seniority * 2.0))
             external_collab = int(rng.poisson(seniority * 1.0))
-            training = int(rng.integers(20, 120))
-            # 연도별 평가 등급 (개인 역량 베이스 ± 연도 노이즈)
+            training        = int(rng.integers(20, 120))
+
             year_quality = float(np.clip(quality_base + rng.normal(0, 0.08), 0.0, 1.0))
-            grade = _grade_from_quality(year_quality)
+            grade        = _grade_from_quality(year_quality)
+
+            # 개인 성과인상율 = 연도·직급·등급 기준율 × 개인 편차(±15 %)
+            base_rate = std_map.get(
+                (year, r["position"], grade),
+                GRADE_MERIT_RATES.get(grade, 0.03),
+            )
+            merit_raise_rate = float(np.clip(
+                rng.normal(base_rate, base_rate * 0.15), 0.001, 0.15
+            ))
             rows.append({
-                "researcher_id": r["id"],
-                "year": year,
-                "performance_grade": grade,
-                "english_score": english_score,
-                "overseas_months": overseas,
+                "researcher_id":        r["id"],
+                "year":                 year,
+                "performance_grade":    grade,
+                "merit_raise_rate":     round(merit_raise_rate, 4),
+                "english_score":        english_score,
+                "overseas_months":      overseas,
                 "international_papers": intl_papers,
-                "peer_review_score": round(peer_score, 2),
-                "leadership_score": round(leadership, 2),
-                "mentoring_count": mentoring,
-                "intra_collab_count": intra_collab,
+                "peer_review_score":    round(peer_score, 2),
+                "leadership_score":     round(leadership, 2),
+                "mentoring_count":      mentoring,
+                "intra_collab_count":   intra_collab,
                 "external_collab_count": external_collab,
-                "training_hours": training,
+                "training_hours":       training,
             })
     return pd.DataFrame(rows)
 

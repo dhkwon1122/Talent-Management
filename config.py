@@ -19,6 +19,19 @@ GRADE_SCORES: Dict[str, float] = {
     "마": 20.0,
 }
 
+# 등급별 기준 성과인상율 (실제 데이터 없을 때 폴백용)
+GRADE_MERIT_RATES: Dict[str, float] = {
+    "가": 0.050,   # 5.0 %
+    "나": 0.040,   # 4.0 %
+    "다": 0.030,   # 3.0 %
+    "라": 0.020,   # 2.0 %
+    "마": 0.010,   # 1.0 %
+}
+
+# 성과인상율 보정 계수 클램프 범위 (하한, 상한)
+# 개인 인상율이 등급 평균의 70 %~130 % 범위를 벗어나지 않도록 제한
+MERIT_CORRECTION_BOUNDS: tuple[float, float] = (0.7, 1.3)
+
 # 각 차원별 세부 지표 가중치 (합계 = 1.0)
 SCORING_WEIGHTS: Dict[str, Dict[str, float]] = {
     "전문성": {

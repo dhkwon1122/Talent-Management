@@ -14,7 +14,7 @@ from src.visualization.components import (
     score_badge,
     overall_score_metric,
 )
-from config import DIMENSIONS, DIMENSION_COLORS, GRADE_SCORES, DEPARTMENTS
+from config import DIMENSIONS, DIMENSION_COLORS, GRADE_SCORES, DEPARTMENTS, MERIT_CORRECTION_BOUNDS
 
 st.set_page_config(page_title="개인 프로필", layout="wide")
 st.title("👤 개인 역량 프로필")
@@ -30,20 +30,67 @@ def load_scores():
 
 @st.cache_data
 def load_grade_history():
-    raw = load_raw()
-    evals = raw["evaluations"]
+    from config import GRADE_MERIT_RATES, MERIT_CORRECTION_BOUNDS
+    raw       = load_raw()
+    evals     = raw["evaluations"]
+    standards = raw.get("merit_standards")
+    pos_map   = dict(zip(raw["researchers"]["id"], raw["researchers"]["position"]))
+
     if "performance_grade" not in evals.columns:
-        return {}
+        return {}, False
+
+    has_merit = "merit_raise_rate" in evals.columns
+
+    # (year, position, grade) → 기준 인상율 조회 테이블
+    std_lookup: dict = {}
+    if standards is not None and not standards.empty:
+        for _, r in standards.iterrows():
+            std_lookup[(int(r["year"]), r["position"], r["grade"])] = float(r["base_rate"])
+
+    lo, hi = MERIT_CORRECTION_BOUNDS
     grade_history = {}
+
     for rid, grp in evals.groupby("researcher_id"):
-        grp = grp.sort_values("year")[["year", "performance_grade"]].copy()
-        grp["환산점수"] = grp["performance_grade"].map(GRADE_SCORES)
-        grade_history[rid] = grp.rename(columns={"year": "연도", "performance_grade": "평가등급"})
-    return grade_history
+        position = pos_map.get(rid, "")
+        grp = grp.sort_values("year").copy()
+        rows = []
+        for _, r in grp.iterrows():
+            base  = float(GRADE_SCORES.get(r["performance_grade"], 60.0))
+            year  = int(r["year"])
+            grade = r["performance_grade"]
+
+            if has_merit:
+                indiv_rate = float(r["merit_raise_rate"])
+                # 기준율: standards CSV(연도·직급·등급) → config 기본값 순 폴백
+                std_rate = (
+                    std_lookup.get((year, position, grade))
+                    or GRADE_MERIT_RATES.get(grade, 0.03)
+                )
+                correction = float(min(hi, max(lo,
+                    indiv_rate / std_rate if std_rate > 0 else 1.0
+                )))
+                merit_pct = round(indiv_rate * 100, 2)
+                std_pct   = round(std_rate * 100, 2)
+            else:
+                correction = 1.0
+                merit_pct  = None
+                std_pct    = None
+
+            rows.append({
+                "연도":           year,
+                "평가등급":       grade,
+                "환산점수":       round(base, 1),
+                "기준인상율":     std_pct,    # 연도·직급·등급 기준
+                "개인인상율":     merit_pct,
+                "보정계수":       round(correction, 3),
+                "보정점수":       round(base * correction, 1),
+            })
+        grade_history[rid] = rows
+    return grade_history, has_merit
 
 
 features, scores = load_scores()
-grade_history = load_grade_history()
+grade_history, has_merit = load_grade_history()
 
 name_map = dict(zip(features["researcher_id"], features["name"]))
 dept_map  = dict(zip(features["researcher_id"], features["department"]))
@@ -107,28 +154,52 @@ with col_badges:
 
 # 연도별 업무성과 평가 등급 이력
 with st.expander("📊 업무성과 평가 등급 이력"):
-    hist = grade_history.get(selected_id)
-    if hist is not None and not hist.empty:
+    hist_rows = grade_history.get(selected_id)
+    if hist_rows:
         grade_colors = {"가": "#1a7f37", "나": "#2da44e", "다": "#f0883e", "라": "#d1242f", "마": "#8b1a1a"}
-        cols_g = st.columns(len(hist))
-        for i, (_, row) in enumerate(hist.iterrows()):
+
+        # 연도별 카드
+        cols_g = st.columns(len(hist_rows))
+        for i, row in enumerate(hist_rows):
             grade = row["평가등급"]
             color = grade_colors.get(grade, "#666")
+            correction = row["보정계수"]
+            arrow = "▲" if correction > 1.0 else ("▼" if correction < 1.0 else "─")
+            arr_color = "#1a7f37" if correction > 1.0 else ("#d1242f" if correction < 1.0 else "#888")
             cols_g[i].markdown(
-                f"<div style='text-align:center'>"
-                f"<div style='font-size:0.85rem;color:#666'>{int(row['연도'])}</div>"
+                f"<div style='text-align:center;padding:4px'>"
+                f"<div style='font-size:0.8rem;color:#666'>{row['연도']}</div>"
                 f"<div style='font-size:2rem;font-weight:bold;color:{color}'>{grade}</div>"
-                f"<div style='font-size:0.8rem;color:#888'>{int(row['환산점수'])}점</div>"
+                f"<div style='font-size:0.78rem;color:#888'>{row['보정점수']:.1f}점</div>"
+                f"<div style='font-size:0.72rem;color:{arr_color}'>{arrow} ×{correction:.3f}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
-        # 최근 연도 가중 평균 점수 표시
-        hist_reset = hist.reset_index(drop=True)
-        n = len(hist_reset)
-        weights = [i + 1 for i in range(n)]
+
+        # 성과인상율 상세 테이블
+        if has_merit:
+            import pandas as pd
+            st.markdown("**연도별 성과인상율 상세**")
+            tbl = pd.DataFrame(hist_rows)[
+                ["연도", "평가등급", "기준인상율", "개인인상율", "보정계수", "환산점수", "보정점수"]
+            ].rename(columns={
+                "기준인상율": "기준 인상율(%) ※연도·직급·등급",
+                "개인인상율": "개인 인상율(%)",
+                "보정계수":   "보정 계수",
+                "환산점수":   "등급 기준점수",
+                "보정점수":   "보정 후 점수",
+            })
+            st.dataframe(tbl, use_container_width=True, hide_index=True)
+
+        # 최근 연도 가중 평균
+        n = len(hist_rows)
+        weights = list(range(1, n + 1))
         w_sum = sum(weights)
-        weighted_avg = sum(hist_reset.loc[i, "환산점수"] * weights[i] for i in range(n)) / w_sum
-        st.caption(f"최근 연도 가중 평균: **{weighted_avg:.1f}점** (최근 연도일수록 높은 비중 적용)")
+        weighted_avg = sum(r["보정점수"] * weights[i] for i, r in enumerate(hist_rows)) / w_sum
+        st.caption(
+            f"최근 연도 가중 평균 보정점수: **{weighted_avg:.1f}점**  "
+            f"(최근 연도 비중 높음 · 보정 계수 범위 {MERIT_CORRECTION_BOUNDS[0]}~{MERIT_CORRECTION_BOUNDS[1]})"
+        )
     else:
         st.info("평가 등급 데이터가 없습니다.")
 

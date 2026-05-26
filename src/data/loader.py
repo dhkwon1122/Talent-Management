@@ -16,13 +16,17 @@ PROCESSED_DIR = ROOT / "data" / "processed"
 
 def load_raw() -> dict[str, pd.DataFrame]:
     _ensure_raw_data()
-    return {
+    data = {
         "researchers": pd.read_csv(RAW_DIR / "researchers.csv"),
-        "papers": pd.read_csv(RAW_DIR / "papers.csv"),
-        "patents": pd.read_csv(RAW_DIR / "patents.csv"),
-        "projects": pd.read_csv(RAW_DIR / "projects.csv"),
+        "papers":      pd.read_csv(RAW_DIR / "papers.csv"),
+        "patents":     pd.read_csv(RAW_DIR / "patents.csv"),
+        "projects":    pd.read_csv(RAW_DIR / "projects.csv"),
         "evaluations": pd.read_csv(RAW_DIR / "evaluations.csv"),
     }
+    merit_path = RAW_DIR / "merit_standards.csv"
+    if merit_path.exists():
+        data["merit_standards"] = pd.read_csv(merit_path)
+    return data
 
 
 def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
@@ -82,8 +86,11 @@ def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
     ).reset_index()
     eval_agg["english_score_norm"] = eval_agg["english_score"] / 990.0
 
-    # --- 업무성과 평가 등급 점수 (최근 연도 가중 평균) ---
-    grade_map = _calc_grade_score(evals)
+    # --- 업무성과 평가 등급 점수 (최근 연도 가중 평균 + 인상율 보정) ---
+    pos_lookup = res.set_index("id")["position"].to_dict()
+    evals_ext  = evals.copy()
+    evals_ext["position"] = evals_ext["researcher_id"].map(pos_lookup)
+    grade_map = _calc_grade_score(evals_ext, raw.get("merit_standards"))
     eval_agg["grade_score"] = eval_agg["researcher_id"].map(grade_map).fillna(60.0)
 
     # --- 국제 논문 (evaluations + papers 합산) ---
@@ -127,22 +134,65 @@ def build_feature_table(raw: dict[str, pd.DataFrame]) -> pd.DataFrame:
     return df
 
 
-def _calc_grade_score(evals: pd.DataFrame) -> dict:
-    """연도별 평가 등급을 최근 연도 선형 가중 평균 점수(0~100)로 변환."""
-    from config import GRADE_SCORES
+def _calc_grade_score(
+    evals: pd.DataFrame,
+    standards: pd.DataFrame | None = None,
+) -> dict:
+    """연도별 평가 등급을 최근 연도 선형 가중 평균 점수(0~100)로 변환.
+
+    성과인상율 보정:
+        (연도 × 직급 × 등급) 기준 인상율 대비 개인 인상율 비율로 등급 점수를 조정한다.
+        기준율 조회 우선순위: ① merit_standards CSV  ② config 기본값
+        보정 계수는 MERIT_CORRECTION_BOUNDS 범위로 클램프한다.
+    """
+    from config import GRADE_SCORES, GRADE_MERIT_RATES, MERIT_CORRECTION_BOUNDS
 
     result = {}
     if "performance_grade" not in evals.columns:
         return result
 
+    has_merit  = "merit_raise_rate" in evals.columns
+    has_pos    = "position" in evals.columns
+
+    # ① merit_standards CSV → (year, position, grade) 3-key 테이블
+    std_lookup: dict = {}
+    if standards is not None and not standards.empty:
+        for _, r in standards.iterrows():
+            std_lookup[(int(r["year"]), r["position"], r["grade"])] = float(r["base_rate"])
+
+    lo, hi = MERIT_CORRECTION_BOUNDS
+
     for rid, grp in evals.groupby("researcher_id"):
         grp = grp.sort_values("year").reset_index(drop=True)
         n = len(grp)
-        # 선형 가중치: 오래된 연도=1, 최근 연도=n
         weights = np.arange(1, n + 1, dtype=float)
         weights /= weights.sum()
-        scores = grp["performance_grade"].map(GRADE_SCORES).fillna(60.0)
-        result[rid] = float((scores.values * weights).sum())
+
+        adjusted = []
+        for _, row in grp.iterrows():
+            base  = float(GRADE_SCORES.get(row["performance_grade"], 60.0))
+
+            if has_merit:
+                year       = int(row["year"])
+                grade      = row["performance_grade"]
+                pos        = row["position"] if has_pos else None
+                indiv_rate = float(row["merit_raise_rate"])
+
+                # 기준율: ① standards CSV(연도·직급·등급) ② config 기본값
+                std_rate = (
+                    std_lookup.get((year, pos, grade))
+                    if pos else None
+                ) or GRADE_MERIT_RATES.get(grade, 0.03)
+
+                correction = float(np.clip(
+                    indiv_rate / std_rate if std_rate > 0 else 1.0, lo, hi
+                ))
+            else:
+                correction = 1.0
+
+            adjusted.append(base * correction)
+
+        result[rid] = float(np.dot(adjusted, weights))
     return result
 
 
@@ -177,13 +227,18 @@ def _ensure_raw_data() -> None:
         from src.data.generator import generate_all
         generate_all()
         return
-    # performance_grade 컬럼 없으면 데이터 재생성
+    # 필수 컬럼 또는 merit_standards.csv 없으면 데이터 재생성
+    regen = False
     eval_path = RAW_DIR / "evaluations.csv"
     if eval_path.exists():
         header = pd.read_csv(eval_path, nrows=0)
-        if "performance_grade" not in header.columns:
-            from src.data.generator import generate_all
-            generate_all()
+        if not {"performance_grade", "merit_raise_rate"}.issubset(header.columns):
+            regen = True
+    if not (RAW_DIR / "merit_standards.csv").exists():
+        regen = True
+    if regen:
+        from src.data.generator import generate_all
+        generate_all()
 
 
 def get_feature_table() -> pd.DataFrame:
